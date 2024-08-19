@@ -7,8 +7,6 @@
     <title>Terrain</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
-    <script type="text/javascript" src="https://spectorcdn.babylonjs.com/spector.bundle.js"></script>
     <style>
         body,
         html {
@@ -60,6 +58,7 @@
         <div id="fps-counter">FPS: 0</div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
     <script src="./common.js"></script>
 
     <script>
@@ -69,6 +68,10 @@
         if (!gl) {
             alert("WebGL 2.0 isn't available in your browser.");
         }
+
+        // enable MSAA
+
+        fbm_drawer = new FBM(gl);
 
         // backface culling
         // gl.enable(gl.CULL_FACE);
@@ -104,6 +107,7 @@
             precision highp float;
             uniform sampler2D uSampler;
             uniform sampler2D uNoiseSampler;
+            uniform vec2 uOffset;
 
             varying lowp vec4 vColor;
             varying highp vec2 vUv;
@@ -113,7 +117,7 @@
                 const float ambient = 0.2;
                 float light = min(texture2D(uNoiseSampler, vUv).r + ambient, 1.0);
 
-                gl_FragColor = vColor * texture2D(uSampler, vUv) * light;
+                gl_FragColor = vColor * texture2D(uSampler, vUv + uOffset) * light;
             }
         `;
 
@@ -129,6 +133,7 @@
                 proj_mat: gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
                 view_mat: gl.getUniformLocation(shaderProgram, 'uViewMatrix'),
                 model_mat: gl.getUniformLocation(shaderProgram, 'uModelMatrix'),
+                offset: gl.getUniformLocation(shaderProgram, 'uOffset'),
             },
             u_texture: gl.getUniformLocation(shaderProgram, 'uSampler'),
             u_noise_texture: gl.getUniformLocation(shaderProgram, 'uNoiseSampler'),
@@ -218,178 +223,28 @@
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-        // GENERATE QUAD
-        target_quad = gen_quad(2);
-
-        target_fb = gl.createFramebuffer();
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, target_fb);
-        gl.framebufferTexture2D(
-            gl.FRAMEBUFFER,
-            gl.COLOR_ATTACHMENT0,
-            gl.TEXTURE_2D,
-            noise_tex,
-            0
-        );
-
-        console.log(gl.checkFramebufferStatus(gl.FRAMEBUFFER) == gl.FRAMEBUFFER_COMPLETE);
-
-        noise_vs = `
-            attribute vec4 aVertexPosition;
-            attribute vec4 aVertexUv;
-            varying highp vec2 vUv;
-            void main(void) {
-                // position goes from 0 to 1, make it span -1 to 1
-                gl_Position = aVertexPosition * 2.0 - 1.0;
-                vUv = aVertexUv.xy;
-            }
-        `;
-
-        noise_fs = `
-            precision highp float;
-
-            // Pulled from my shader toy shader https://www.shadertoy.com/view/dsfBRX
-
-            // HIGHER IS MORE
-            #define DEFINITION 8.
-            // HIGHER IS MORE
-            #define SHATTEREDNESS 2.75
-            // LOWER IS MORE, values far from 0.5 lower the definition
-            #define INLANDNESS 0.475
-
-
-            float random (in vec2 st) {
-                return fract(cos(sin(dot(st.xy,
-                                    vec2(12.9898,78.233))))*
-                    43758.5453123);
-            }
-
-            // Based on Morgan McGuire @morgan3d
-            // https://www.shadertoy.com/view/4dS3Wd
-            float noise (in vec2 st) {
-                vec2 i = floor(st);
-                vec2 f = fract(st);
-
-                // Four corners in 2D of a tile
-                float a = random(i);
-                float b = random(i + vec2(1.0, 0.0));
-                float c = random(i + vec2(0.0, 1.0));
-                float d = random(i + vec2(1.0, 1.0));
-
-                vec2 u = f * f * (3.0 - 2.0 * f);
-
-                return mix(a, b, u.x) +
-                        (c - a)* u.y * (1.0 - u.x) +
-                        (d - b) * u.x * u.y;
-            }
-            
-            // Also adapted from https://github.com/danielscherzer/SHADER/blob/master/Noise/fBm.glsl
-            float fBm(vec2 U)
-            {
-                // Properties
-                const float octaves = DEFINITION;
-                const float lacunarity = SHATTEREDNESS;
-                const float gain = INLANDNESS;
-                // Initial values
-                float amplitude = 1.0 * gain;
-                float frequency = 1.0;
-                float density = 0.0;
-                // Loop of octaves
-                for (float i = 0.0; i < octaves; ++i)
-                {
-                    density += amplitude * noise(frequency * U);
-                    frequency *= lacunarity;
-                    amplitude *= gain;
-                }
-                return density;
-            }
-
-
-            varying highp vec2 vUv;
-            void main(void) {
-
-                float h = fBm(vUv);
-
-                gl_FragColor = vec4(h, h, h, 1.0);
-            }
-        `;
-
-        noise_program = initShaderProgram(gl, noise_vs, noise_fs);
-
-        noise_program_info = {
-            program: noise_program,
-            attr_locations: {
-                v_pos: gl.getAttribLocation(noise_program, 'aVertexPosition'),
-                v_uv: gl.getAttribLocation(noise_program, 'aVertexUv'),
-            },
-        };
-
-        gl.useProgram(noise_program_info.program);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, target_quad.vertices);
-        gl.vertexAttribPointer(noise_program_info.attr_locations.v_pos, 3, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(noise_program_info.attr_locations.v_pos);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, target_quad.uvs);
-        gl.vertexAttribPointer(noise_program_info.attr_locations.v_uv, 2, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(noise_program_info.attr_locations.v_uv);
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, target_fb);
-        gl.viewport(0, 0, 128, 128);
-
-        gl.clearColor(0.0, 0.0, 0.0, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        gl.drawArrays(gl.TRIANGLES, 0, target_quad.n_triangles * 3);
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, canvas.width, canvas.height);
 
 
         // vertices 3
         // uvs 2
         // normals 3
-        buffers = gen_quad(128);
+        buffers = gen_quad(gl, 128);
 
         // RENDER LOOP
-        let image = new Image();
-        let texture = gl.createTexture();
+        let grass = new ImageTexture2D(gl, "grass.png", {
+            wrap_s: gl.REPEAT,
+            wrap_t: gl.REPEAT,
+            generate_mipmaps: true
+        });
 
-        image.onload = () => {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texImage2D(
-                gl.TEXTURE_2D,
-                0,
-                gl.RGBA,
-                gl.RGBA,
-                gl.UNSIGNED_BYTE,
-                image,
-            );
-
-            isPowerOf2 = (value) => {
-                return (value & (value - 1)) == 0;
-            }
-
-            // WebGL1 has different requirements for power of 2 images
-            // vs. non power of 2 images so check if the image is a
-            // power of 2 in both dimensions.
-            if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
-                // Yes, it's a power of 2. Generate mips.
-                gl.generateMipmap(gl.TEXTURE_2D);
-            } else {
-                // No, it's not a power of 2. Turn off mips and set
-                // wrapping to clamp to edge
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            }
-        };
-
-        image.src = "grass.png";
-
-        if (texture == null) {
-            console.error("Texture is null");
-        }
+        skybox = new Skybox(gl, new Cubemap(gl, [
+            "skybox/right.jpg",
+            "skybox/left.jpg",
+            "skybox/top.jpg",
+            "skybox/bottom.jpg",
+            "skybox/front.jpg",
+            "skybox/back.jpg",
+        ]));
 
         function render() {
 
@@ -397,6 +252,13 @@
             let delta_time = time - last_time;
 
             last_time = time;
+
+            x_pos = time / 10000.0;
+
+            fbm_drawer.sample_fbm(
+                gl, noise_tex, 42, 128, 128, x_pos, 0.0
+            )
+
 
             gl.clearColor(0., 0., 0., 1.0);
             gl.clearDepth(1.0);
@@ -413,45 +275,72 @@
 
             mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar);
 
-            const modelMatrix = mat4.create();
+            const terrainModelMat = mat4.create();
             const viewMatrix = mat4.create();
 
 
-            mat4.translate(modelMatrix, modelMatrix, [-2.0, 0.0, 0.0]);
-            mat4.scale(modelMatrix, modelMatrix, [4.0, 4.0, 4.0]);
-            mat4.rotate(modelMatrix, modelMatrix, Math.PI / 2, [1.0, 0.0, 0.0]);
+            mat4.translate(terrainModelMat, terrainModelMat, [-2.0, 0.0, 0.0]);
+            mat4.scale(terrainModelMat, terrainModelMat, [4.0, 4.0, 4.0]);
+            mat4.rotate(terrainModelMat, terrainModelMat, Math.PI / 2, [1.0, 0.0, 0.0]);
 
-            //mat4.rotate(modelMatrix, modelMatrix, performance.now() / 2000 * Math.PI, [0.0, 1.0, 0.0]);
+            //mat4.rotate(terrainModelMat, terrainModelMat, performance.now() / 2000 * Math.PI, [0.0, 1.0, 0.0]);
             mat4.translate(viewMatrix, viewMatrix, [0.0, 0.0, -14.0]);
-
-            // look down
-
             mat4.rotate(viewMatrix, viewMatrix, Math.PI / 6, [1.0, 0.0, 0.0]);
+
+            // Draw Skybox
+
+            gl.useProgram(skybox.program);
+
+            gl.bindVertexArray(skybox.skybox.vao);
+
+            gl.disable(gl.DEPTH_TEST);
+
+            const skyboxModelMat = mat4.create();
+            mat4.scale(skyboxModelMat, skyboxModelMat, [50.0, 50.0, 50.0]);
+            mat4.rotate(skyboxModelMat, skyboxModelMat, -Math.PI / 8, [1.0, 0.0, 0.0]);
+            const skyboxViewMatrix = mat4.create();
+            mat4.copy(skyboxViewMatrix, viewMatrix);
+
+            const modelViewMatrix = mat4.create();
+            mat4.multiply(modelViewMatrix, skyboxViewMatrix, skyboxModelMat);
+
+            gl.uniformMatrix4fv(skybox.program.info.uModelViewMatrix, false, modelViewMatrix);
+            gl.uniformMatrix4fv(skybox.program.info.uProjectionMatrix, false, projectionMatrix);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox.cubemap.cubemap);
+            gl.uniform1i(skybox.program.info.uCubemap, 0);
+
+            gl.drawElements(gl.TRIANGLES, skybox.skybox.n_elements, gl.UNSIGNED_SHORT, 0);
 
             gl.useProgram(programInfo.program);
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vertices);
-            gl.vertexAttribPointer(programInfo.attr_locations.v_pos, 3, gl.FLOAT, false, 0, 0);
-            gl.enableVertexAttribArray(programInfo.attr_locations.v_pos);
-
-            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.uvs);
-            gl.vertexAttribPointer(programInfo.attr_locations.v_uv, 2, gl.FLOAT, false, 0, 0);
-            gl.enableVertexAttribArray(programInfo.attr_locations.v_uv);
-
+            gl.bindVertexArray(buffers.quad_vao);
 
             gl.uniformMatrix4fv(programInfo.u_locations.proj_mat, false, projectionMatrix);
             gl.uniformMatrix4fv(programInfo.u_locations.view_mat, false, viewMatrix);
-            gl.uniformMatrix4fv(programInfo.u_locations.model_mat, false, modelMatrix);
+            gl.uniformMatrix4fv(programInfo.u_locations.model_mat, false, terrainModelMat);
+            gl.uniform2f(programInfo.u_locations.offset, x_pos, 0.0);
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, noise_tex);
             gl.uniform1i(programInfo.u_noise_texture, 0);
 
             gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.bindTexture(gl.TEXTURE_2D, grass.texture);
             gl.uniform1i(programInfo.u_texture, 1);
 
             gl.drawArrays(gl.TRIANGLES, 0, buffers.n_triangles * 3);
+
+            // check for errors
+            let error = gl.getError();
+            if (error != gl.NO_ERROR) {
+                console.log("WebGL error: " + error);
+            }
+
+            // update fps counter
+            let fps = 1000.0 / delta_time;
+            document.getElementById('fps-counter').innerText = `FPS: ${fps.toFixed(2)}`;
 
             requestAnimationFrame(render);
         }
