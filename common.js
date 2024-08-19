@@ -40,102 +40,70 @@ function gen_quad(ctx, resolution) {
     let vertices = [];
     let uvs = [];
     let normals = [];
+    let indices = [];
 
     let step = 1.0 / (resolution - 1);
 
     start_x = 0.0;
     start_y = 1.0;
 
+    vtx_hash = {};
+
+    function hashVertex(position, uv, normal) {
+    return `${position[0]}_${position[1]}_${position[2]}_${uv[0]}_${uv[1]}_${normal[0]}_${normal[1]}_${normal[2]}`;
+    }
+
+    function addVertex(position, uv, normal) {
+        const hash = hashVertex(position, uv, normal);
+        
+        if (hash in vtx_hash) {
+            return vtx_hash[hash];
+        } else {
+            const index = vertices.length / 3;
+
+            vertices.push(position[0], position[1], position[2]);
+            uvs.push(uv[0], uv[1]);
+            normals.push(normal[0], normal[1], normal[2]);
+
+            vtx_hash[hash] = index;
+            return index;
+        }
+    }
+
     for (let i = 0; i < (resolution - 1); i++) {
         for (let j = 0; j < (resolution - 1); j++) {
-            // first triangle CCW
-            //       2
-            //      /|
-            //    /  |
-            //  /    |
-            // 0-----1
 
-            // vertex 0
-            vertices.push(start_x + i * step);
-            vertices.push(start_y - j * step);
-            vertices.push(0.0);
+            // First triangle CCW
+            const pos0 = [start_x + i * step, start_y - j * step, 0.0];
+            const uv0 = [i * step, j * step];
+            const norm0 = [0.0, 0.0, 1.0];
 
-            uvs.push(i * step);
-            uvs.push(j * step);
+            const pos1 = [start_x + (i + 1) * step, start_y - j * step, 0.0];
+            const uv1 = [(i + 1) * step, j * step];
+            const norm1 = [0.0, 0.0, 1.0];
 
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
+            const pos2 = [start_x + i * step, start_y - (j + 1) * step, 0.0];
+            const uv2 = [i * step, (j + 1) * step];
+            const norm2 = [0.0, 0.0, 1.0];
 
-            // vertex 1
-            vertices.push(start_x + (i + 1) * step);
-            vertices.push(start_y - j * step);
-            vertices.push(0.0);
-
-            uvs.push((i + 1) * step);
-            uvs.push(j * step);
+            // Add indices for first triangle
+            const index0 = addVertex(pos0, uv0, norm0);
+            const index1 = addVertex(pos1, uv1, norm1);
+            const index2 = addVertex(pos2, uv2, norm2);
             
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
+            indices.push(index0, index1, index2);
 
-            // vertex 2
-            vertices.push(start_x + i * step);
-            vertices.push(start_y - (j + 1) * step);
-            vertices.push(0.0);
+            // Second triangle CCW
+            const pos3 = [start_x + (i + 1) * step, start_y - (j + 1) * step, 0.0];
+            const uv3 = [(i + 1) * step, (j + 1) * step];
+            const norm3 = [0.0, 0.0, 1.0];
 
-            uvs.push(i * step);
-            uvs.push((j + 1) * step);
-
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
-
-
-            // second triangle CCW
-            // 2------1
-            // |     /
-            // |   /
-            // |/
-            // 0
+            // Add indices for second triangle
+            const index3 = addVertex(pos2, uv2, norm2);
+            const index4 = addVertex(pos1, uv1, norm1);
+            const index5 = addVertex(pos3, uv3, norm3);
             
-            // vertex 0
-
-            vertices.push(start_x + i * step);
-            vertices.push(start_y - (j + 1) * step);
-            vertices.push(0.0);
-
-            uvs.push(i * step);
-            uvs.push((j + 1) * step);
-
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
-
-            // vertex 1
-
-            vertices.push(start_x + (i + 1) * step);
-            vertices.push(start_y - j * step);
-            vertices.push(0.0);
-
-            uvs.push((i + 1) * step);
-            uvs.push(j * step);
-
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
-
-            // vertex 2
-            vertices.push(start_x + (i + 1) * step);
-            vertices.push(start_y - (j + 1) * step);
-            vertices.push(0.0);
-
-            uvs.push((i + 1) * step);
-            uvs.push((j + 1) * step);
-
-            normals.push(0.0);
-            normals.push(0.0);
-            normals.push(1.0);
+            indices.push(index3, index4, index5);
         }
     }
 
@@ -151,12 +119,15 @@ function gen_quad(ctx, resolution) {
     ctx.bindBuffer(ctx.ARRAY_BUFFER, normal_buffer);
     ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(normals), ctx.STATIC_DRAW);
 
+    element_buffer = ctx.createBuffer();
+    ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, element_buffer);
+    ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), ctx.STATIC_DRAW);
+
     quad_vao = ctx.createVertexArray();
     ctx.bindVertexArray(quad_vao);
 
     ctx.bindBuffer(ctx.ARRAY_BUFFER, vert_buffer);
     ctx.enableVertexAttribArray(0);
-
     ctx.vertexAttribPointer(0, 3, ctx.FLOAT, false, 0, 0);
 
     ctx.bindBuffer(ctx.ARRAY_BUFFER, uv_buffer);
@@ -165,15 +136,17 @@ function gen_quad(ctx, resolution) {
 
     ctx.bindBuffer(ctx.ARRAY_BUFFER, normal_buffer);
     ctx.enableVertexAttribArray(2);
-
     ctx.vertexAttribPointer(2, 3, ctx.FLOAT, false, 0, 0);
+
+    ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, element_buffer);
+
     ctx.bindVertexArray(null);
 
 
 
     return {
-        quad_vao: quad_vao,
-        n_triangles: vertices.length / 9
+        vao: quad_vao,
+        n_elements: indices.length
     };
 }
 
@@ -391,7 +364,7 @@ class PerlinNoise {
 
         ctx.framebufferTexture2D(ctx.FRAMEBUFFER, ctx.COLOR_ATTACHMENT0, ctx.TEXTURE_2D, texture, 0);
 
-        ctx.bindVertexArray(this.target_quad.quad_vao);
+        ctx.bindVertexArray(this.target_quad.vao);
 
         let last_width = ctx.drawingBufferWidth;
         let last_height = ctx.drawingBufferHeight;
@@ -400,7 +373,7 @@ class PerlinNoise {
         
         ctx.uniform2f(this.program.info.uSampleOffset, x, y);
         ctx.uniform1f(this.program.info.uSeed, seed);
-        ctx.drawArrays(ctx.TRIANGLES, 0, 6);
+        ctx.drawElements(ctx.TRIANGLES, this.target_quad.n_elements, ctx.UNSIGNED_SHORT, 0);
 
         ctx.bindVertexArray(null);
         ctx.bindFramebuffer(ctx.FRAMEBUFFER, null);
@@ -499,7 +472,7 @@ class FBM {
 
         ctx.framebufferTexture2D(ctx.FRAMEBUFFER, ctx.COLOR_ATTACHMENT0, ctx.TEXTURE_2D, texture, 0);
 
-        ctx.bindVertexArray(this.target_quad.quad_vao);
+        ctx.bindVertexArray(this.target_quad.vao);
 
         let last_width = ctx.drawingBufferWidth;
         let last_height = ctx.drawingBufferHeight;
@@ -508,8 +481,8 @@ class FBM {
             
         ctx.uniform2f(this.program.info.uSampleOffset, x, y);
         ctx.uniform1f(this.program.info.uSeed, seed);
-        ctx.drawArrays(ctx.TRIANGLES, 0, 6);
-
+        ctx.drawElements(ctx.TRIANGLES, this.target_quad.n_elements, ctx.UNSIGNED_SHORT, 0);
+        
         ctx.bindVertexArray(null);
         ctx.bindFramebuffer(ctx.FRAMEBUFFER, null);
         ctx.viewport(0, 0, last_width, last_height);

@@ -88,7 +88,7 @@
             out highp vec2 vUv;
             out highp float vHeight;
 
-            #define EXAGGERATION 3.0
+            #define EXAGGERATION 2.0
 
             uniform sampler2D uNoiseSampler;
 
@@ -133,7 +133,7 @@
             const highp vec3 sun_dir = normalize(vec3(1.0, 1.0, 1.0));
 
             const highp float ambient = 0.2;
-            const highp float ambient_reflection = 0.4;
+            const highp float ambient_reflection = 0.25;    
 
             void main(void) {
 
@@ -201,7 +201,16 @@
 
         // INIT "GLOBALS"
 
-        let chunks = [];
+        let chunks = [
+            {
+                coordinate: vec2.fromValues(0.0, 0.0),
+                elevation: gl.createTexture(),
+            }
+        ];
+
+        
+
+
         let last_time = 0.0;
 
         let camera = {
@@ -229,7 +238,6 @@
 
 
 
-
         // DECLARE PERIODIC EVENTS
 
         // schema: {name: string, interval: number, func: function}
@@ -244,7 +252,7 @@
             },
             {
                 "name": "despawn_chunks",
-                "interval": 2500.0, // ms
+                "interval": 5000.0, // ms
                 "offset": 1250.0, // ms
                 "func": function () {
                     console.log("Despawning chunks");
@@ -361,7 +369,7 @@
         // vertices 3
         // uvs 2
         // normals 3
-        buffers = gen_quad(gl, 512);
+        buffers = gen_quad(gl, 128);
 
         // RENDER LOOP
         let grass = new ImageTexture2D(gl, "textures/grass_diffuse.png", {
@@ -508,7 +516,7 @@
 
             gl.useProgram(programInfo.program);
 
-            gl.bindVertexArray(buffers.quad_vao);
+            gl.bindVertexArray(buffers.vao);
 
             gl.enable(gl.DEPTH_TEST);
             gl.enable(gl.CULL_FACE);
@@ -539,7 +547,8 @@
             gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox.cubemap.cubemap);
             gl.uniform1i(programInfo.u_cube_texture, 4);
 
-            gl.drawArrays(gl.TRIANGLES, 0, buffers.n_triangles * 3);
+            console.log(programInfo);
+            gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
 
             gl.disable(gl.CULL_FACE);
             gl.disable(gl.DEPTH_TEST);
