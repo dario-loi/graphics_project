@@ -430,7 +430,7 @@ class FBM {
 
             // HIGHER IS MORE
             #define AMPLITUDE 2.0
-            #define OCTAVES 8
+            #define OCTAVES 12
 
             float random (in vec2 st, in float seed) {
                 return fract(cos(sin(dot(st.xy,
@@ -459,12 +459,12 @@ class FBM {
 
             float fbm (in vec2 st, in float seed) {
                 float value = 0.0;
-                float amplitude = 0.5;
+                float amplitude = 0.44;
                 float frequency = 1.0;
                 for (int i = 0; i < OCTAVES; i++) {
                     value += amplitude * noise(st * frequency, seed);
                     frequency *= 2.0;
-                    amplitude *= 0.5;
+                    amplitude *= 0.44;
                 }
                 return value;
             }

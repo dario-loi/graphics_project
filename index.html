@@ -77,47 +77,93 @@
         // gl.enable(gl.CULL_FACE);
 
         // Vertex shader program
-        const vsSource = `
-            attribute vec4 aVertexPosition;
-            attribute vec4 aVertexUv;
+        const vsSource = `#version 300 es
+            in vec4 aVertexPosition;
+            in vec4 aVertexUv;
             uniform mat4 uModelMatrix;
             uniform mat4 uViewMatrix;
             uniform mat4 uProjectionMatrix;
-            varying lowp vec4 vColor;
-            varying highp vec2 vUv;
+            out lowp vec4 vColor;
+            out highp vec4 vPosition;
+            out highp vec2 vUv;
+            out highp float vHeight;
+
+            #define EXAGGERATION 3.0
 
             uniform sampler2D uNoiseSampler;
 
             void main(void) {
 
-                float h = texture2D(uNoiseSampler, aVertexUv.xy).r;
+                float h = texture(uNoiseSampler, aVertexUv.xy).r;
 
-                // scale the height
+                vec4 deformed = (uModelMatrix * aVertexPosition) + vec4(0.0, EXAGGERATION * h, 0.0, 0.0);
 
-                gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * aVertexPosition;
+                vPosition = uViewMatrix * deformed;
+                gl_Position = uProjectionMatrix * vPosition;
 
-                gl_Position.y += h * 5.0 - 2.0;
                 vColor = vec4(1.0, 1.0, 1.0, 1.0);
                 vUv = aVertexUv.xy;
+                vHeight = h;
             }
         `;
 
         // Fragment shader program
-        const fsSource = `
+        const fsSource = `#version 300 es
             precision highp float;
+
             uniform sampler2D uSampler;
             uniform sampler2D uNoiseSampler;
-            uniform vec2 uOffset;
+            uniform sampler2D uNormalSampler;
+            uniform sampler2D uOcclusionSampler;
+            uniform sampler2D uRoughnessSampler;
 
-            varying lowp vec4 vColor;
-            varying highp vec2 vUv;
+            uniform vec2 uOffset;
+            uniform vec4 uCameraPosition;
+
+            in lowp vec4 vColor;
+            in highp vec4 vPosition;
+            in highp vec2 vUv;
+            in highp float vHeight;
+
+            out vec4 fragColor;
+
+            // coming from the top right of the screen
+            const highp vec3 sun_dir = normalize(vec3(1.0, 1.0, 1.0));
+
+            const highp float ambient = 0.2;
 
             void main(void) {
 
-                const float ambient = 0.2;
-                float light = min(texture2D(uNoiseSampler, vUv).r + ambient, 1.0);
+                vec3 dx = dFdx(vPosition.xyz);
+                vec3 dy = dFdy(vPosition.xyz);
 
-                gl_FragColor = vColor * texture2D(uSampler, vUv + uOffset) * light;
+                vec3 normal = normalize(cross(dx, dy));
+
+                // TBN
+                vec3 T = normalize(dx);
+                vec3 B = normalize(dy);
+                vec3 N = normalize(normal);
+
+                mat3 TBN = mat3(T, B, N);
+
+                normal = texture(uNormalSampler, vUv).xyz;
+                normal = normalize(normal * 2.0 - 1.0);
+
+                normal = normalize(TBN * normal);
+
+                float occlusion = texture(uOcclusionSampler, vUv).r;
+
+                float diffuse = max(dot(normal, sun_dir), 0.0);
+
+                vec3 view_dir = normalize(uCameraPosition.xyz - vPosition.xyz);
+                vec3 half_dir = normalize(sun_dir + view_dir);
+                float roughness = texture(uRoughnessSampler, vUv).r;
+
+                float specular = pow(max(dot(normal, half_dir), 0.0), 16.0) * (1.0 - roughness);
+
+                float light = (ambient + diffuse + specular) * occlusion;
+
+                fragColor = vec4(texture(uSampler, vUv).rgb * light, 1.0);
             }
         `;
 
@@ -137,6 +183,8 @@
             },
             u_texture: gl.getUniformLocation(shaderProgram, 'uSampler'),
             u_noise_texture: gl.getUniformLocation(shaderProgram, 'uNoiseSampler'),
+            u_normals_texture: gl.getUniformLocation(shaderProgram, 'uNormalSampler'),
+            u_occlusion_texture: gl.getUniformLocation(shaderProgram, 'uOcclusionSampler'),
         };
 
 
@@ -303,14 +351,28 @@
         // vertices 3
         // uvs 2
         // normals 3
-        buffers = gen_quad(gl, 256);
+        buffers = gen_quad(gl, 512);
 
         // RENDER LOOP
-        let grass = new ImageTexture2D(gl, "grass.png", {
+        let grass = new ImageTexture2D(gl, "textures/grass_diffuse.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
-            anisotropy: 16
+            anisotropy: 4
+        });
+
+        let grass_normals = new ImageTexture2D(gl, "textures/grass_normal.png", {
+            wrap_s: gl.REPEAT,
+            wrap_t: gl.REPEAT,
+            generate_mipmaps: true,
+            anisotropy: 4
+        });
+
+        let grass_occlusion = new ImageTexture2D(gl, "textures/grass_occlusion.png", {
+            wrap_s: gl.REPEAT,
+            wrap_t: gl.REPEAT,
+            generate_mipmaps: true,
+            anisotropy: 4
         });
 
         skybox = new Skybox(gl, new Cubemap(gl, [
@@ -403,12 +465,9 @@
 
             const terrainModelMat = mat4.create();
 
-
             mat4.translate(terrainModelMat, terrainModelMat, [0.0, 0.0, 0.0]);
             mat4.scale(terrainModelMat, terrainModelMat, [8.0, 4.0, 8.0]);
             mat4.rotate(terrainModelMat, terrainModelMat, Math.PI / 2, [1.0, 0.0, 0.0]);
-
-            //mat4.rotate(terrainModelMat, terrainModelMat, performance.now() / 2000 * Math.PI, [0.0, 1.0, 0.0]);
 
             // Draw Skybox
 
@@ -456,6 +515,14 @@
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, grass.texture);
             gl.uniform1i(programInfo.u_texture, 1);
+
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, grass_normals.texture);
+            gl.uniform1i(programInfo.u_normals_texture, 2);
+
+            gl.activeTexture(gl.TEXTURE3);
+            gl.bindTexture(gl.TEXTURE_2D, grass_occlusion.texture);
+            gl.uniform1i(programInfo.u_occlusion_texture, 3);
 
             gl.drawArrays(gl.TRIANGLES, 0, buffers.n_triangles * 3);
 
