@@ -56,7 +56,45 @@
     </div>
     <div id="info" class="flex flex-col justify-center items-center">
         <div id="fps-counter">FPS: 0</div>
+        <!-- List of sliders for settings -->
+        <div class="flex flex-col justify-left items-left w-full">
+            <div class="flex flex-row justify-between items-center my-2">
+                <label for="fov" class="mx-2">FOV</label>
+                <input type="range" id="fov" name="fov" min="30.0" max="100.0" value="45.0" step="1.0"
+                    class="flex-grow mx-2">
+                <span id="fov-value" class="mx-2">45</span>
+            </div>
+            <div class="flex flex-row justify-between items-center my-2">
+                <label for="chunk-scale" class="mx-2">Chunk Scale</label>
+                <input type="range" id="chunk-scale" name="chunk-scale" min="1.0" max="32.0" value="16.0" step="1.0"
+                    class="flex-grow mx-2">
+                <span id="chunk-scale-value" class="mx-2">16</span>
+            </div>
+            <div class="flex flex-row justify-between items-center my-2">
+                <label for="elevation-scale" class="mx-2">Chunk Elevation Scale</label>
+                <input type="range" id="elevation-scale" name="elevation-scale" min="1.0" max="50.0" value="8.0"
+                    step="0.5" class="flex-grow mx-2">
+                <span id="elevation-scale-value" class="mx-2">8</span>
+            </div>
+        </div>
     </div>
+
+    <script>
+        // update the value of the slider
+        document.getElementById('fov').addEventListener('input', function () {
+            document.getElementById('fov-value').innerText = this.value;
+        });
+
+        document.getElementById('chunk-scale').addEventListener('input', function () {
+            document.getElementById('chunk-scale-value').innerText = this.value;
+        });
+
+        document.getElementById('elevation-scale').addEventListener('input', function () {
+            document.getElementById('elevation-scale-value').innerText = this.value;
+        });
+
+
+    </script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
     <script src="./common.js"></script>
@@ -88,7 +126,7 @@
             out highp vec2 vUv;
             out highp float vHeight;
 
-            #define EXAGGERATION 2.0
+            #define EXAGGERATION 16.0
 
             uniform sampler2D uNoiseSampler;
 
@@ -96,7 +134,7 @@
 
                 float h = texture(uNoiseSampler, aVertexUv.xy).r;
 
-                vec4 deformed = (uModelMatrix * aVertexPosition) + vec4(0.0, EXAGGERATION * h, 0.0, 0.0);
+                vec4 deformed = (uModelMatrix * (aVertexPosition + vec4(0.0, 0.0, h - 1.0/2.0, 0.0)));
 
                 vPosition = uViewMatrix * deformed;
                 gl_Position = uProjectionMatrix * vPosition;
@@ -132,8 +170,7 @@
             // coming from the top right of the screen
             const highp vec3 sun_dir = normalize(vec3(1.0, 1.0, 1.0));
 
-            const highp float ambient = 0.2;
-            const highp float ambient_reflection = 0.25;    
+            const highp float ambient = 0.1;
 
             void main(void) {
 
@@ -162,13 +199,15 @@
                 vec3 half_dir = normalize(sun_dir + view_dir);
                 float roughness = texture(uRoughnessSampler, vUv).r;
 
-                float specular = pow(max(dot(normal, half_dir), 0.0), 16.0) * (1.0 - roughness);
+                float specular = 0.0;
+                if (diffuse > 0.0) {
+                    specular = pow(max(dot(normal, half_dir), 0.0), 8.0) * (1.0 - roughness);
+                }
 
                 // ambient light from the skybox
 
                 vec3 R = reflect(view_dir, normal);
-                vec3 skybox_color = texture(uSkybox, R).rgb * ambient_reflection;
-
+                vec3 skybox_color = texture(uSkybox, R).rgb * (1.0 - roughness) * 0.2;
 
                 float light = (ambient + diffuse + specular);
 
@@ -201,15 +240,11 @@
 
         // INIT "GLOBALS"
 
-        let chunks = [
-            {
-                coordinate: vec2.fromValues(0.0, 0.0),
-                elevation: gl.createTexture(),
-            }
-        ];
+        let chunk_scale = 16.0;
+        let chunk_elevation_scale = 8.0;
+        let spawn_radius = 8.0;
 
-        
-
+        let chunks = {};
 
         let last_time = 0.0;
 
@@ -220,11 +255,12 @@
             is_locked: false,
             delta_x: 0.0,
             delta_y: 0.0,
-            position: vec3.fromValues(0.0, 0.0, -10.0),
+            position: vec3.fromValues(0.0, 5.0, -10.0),
             up: vec3.fromValues(0.0, 1.0, 0.0),
             front: vec3.fromValues(0.0, 0.0, 1.0),
-            speed: 0.001,
+            speed: 0.005,
             sprint_multiplier: 2.5,
+            fov: 45.0,
             keys: {
                 "w": false,
                 "a": false,
@@ -236,36 +272,94 @@
             }
         };
 
-
-
         // DECLARE PERIODIC EVENTS
 
         // schema: {name: string, interval: number, func: function}
         lambdas = [
             {
                 "name": "spawn_chunks",
-                "interval": 2500.0, // ms
+                "interval": 100.0, // ms
                 "offset": 0.0, // ms
+                "exec_first": true,
                 "func": function () {
                     console.log("Spawning chunks");
+                    console.log("Player position: " + camera.position);
+
+
+                    let center = vec2.fromValues(camera.position[0], camera.position[2]);
+                    center = vec2.scale(center, center, 1.0 / chunk_scale);
+                    console.log("Center (pre-floor) : " + center);
+                    center = vec2.floor(center, center);
+                    console.log("Center: " + center);
+
+                    console.log(chunks);
+                    for (let x = -spawn_radius; x < spawn_radius; x++) {
+                        for (let z = -spawn_radius; z < spawn_radius; z++) {
+                            // restrict to circle
+                            const grid_value = vec2.fromValues(x, z);
+                            const chunk_coords = vec2.add(vec2.create(), center, grid_value);
+
+                            const hash = `${chunk_coords[0]}_${chunk_coords[1]}`;
+
+                            if (vec2.squaredLength(grid_value) < spawn_radius * spawn_radius) {
+                                if (!chunks[hash]) {
+                                    chunks[hash] = {
+                                        "coordinate": chunk_coords,
+                                        "elevation": new NoiseTexture2D(gl, 128, 128)
+                                    };
+                                    fbm_drawer.sample_fbm(gl, chunks[hash].elevation.texture, 42, 128, 128, chunk_coords[0], chunk_coords[1]);
+                                    console.log("Spawned chunk at " + x + ", " + z);
+                                }
+                            }
+
+                        }
+                    }
                 }
             },
             {
                 "name": "despawn_chunks",
-                "interval": 5000.0, // ms
-                "offset": 1250.0, // ms
+                "interval": 100.0, // ms
+                "offset": 50.0, // ms
+                "exec_first": true,
                 "func": function () {
                     console.log("Despawning chunks");
+
+                    to_delete = [];
+
+                    for (let key in chunks) {
+                        let chunk = chunks[key];
+                        let x = chunk.coordinate[0];
+                        let z = chunk.coordinate[1];
+
+                        // position relative to player
+                        let player_pos = vec2.fromValues(camera.position[0], camera.position[2]);
+                        let player_chunk_coords = vec2.scale(player_pos, player_pos, 1.0 / chunk_scale);
+                        player_chunk_coords = vec2.floor(player_chunk_coords, player_chunk_coords);
+
+
+                        if (Math.abs(player_chunk_coords[0] - x) > spawn_radius || Math.abs(player_chunk_coords[1] - z) > spawn_radius) {
+                            // pop from chunks
+                            to_delete.push(key);
+                            console.log("Despawned chunk at " + x + ", " + z);
+                        }
+                    }
+
+                    for (let key of to_delete) {
+                        delete chunks[key];
+                    }
                 }
             },
         ];
 
         // for each lambda, after offset time, register the lambda to be called every interval time
-        // for (let lambda of lambdas) {
-        //     setTimeout(function () {
-        //         setInterval(lambda.func, lambda.interval);
-        //     }, lambda.offset);
-        // }
+        for (let lambda of lambdas) {
+            setTimeout(function () {
+                if (lambda.exec_first) {
+                    lambda.func();
+                }
+                setInterval(lambda.func, lambda.interval);
+            }, lambda.offset);
+        }
 
         // DECLARE EVENT LISTENERS
 
@@ -333,7 +427,7 @@
                     key = event.key.toLowerCase();
                     camera.keys[key] = false;
                 }
-            }
+            },
         ]
 
         // inject event listeners
@@ -344,53 +438,49 @@
             window.addEventListener(listener.trigger, listener.func);
         }
 
+        // listeners for the sliders
+
+        document.getElementById('fov').addEventListener('input', function () {
+            camera.fov = parseFloat(this.value);
+        });
+
+        document.getElementById('chunk-scale').addEventListener('input', function () {
+            chunk_scale = parseFloat(this.value);
+        });
+
+        document.getElementById('elevation-scale').addEventListener('input', function () {
+            chunk_elevation_scale = parseFloat(this.value);
+        });
+
         // PREP NOISE TARGET
-
-        let noise_tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, noise_tex);
-        gl.texImage2D(
-            gl.TEXTURE_2D,
-            0,
-            gl.RGBA,
-            256,
-            256,
-            0,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
-            null
-        );
-
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-
-
 
         // vertices 3
         // uvs 2
         // normals 3
-        buffers = gen_quad(gl, 128);
+        buffers = gen_quad(gl, 256);
+
+        const ANISOTROPIC_FILTERING = 8;
 
         // RENDER LOOP
         let grass = new ImageTexture2D(gl, "textures/grass_diffuse.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
-            anisotropy: 4
+            anisotropy: ANISOTROPIC_FILTERING
         });
 
         let grass_normals = new ImageTexture2D(gl, "textures/grass_normal.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
-            anisotropy: 4
+            anisotropy: ANISOTROPIC_FILTERING
         });
 
         let grass_occlusion = new ImageTexture2D(gl, "textures/grass_occlusion.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
-            anisotropy: 4
+            anisotropy: ANISOTROPIC_FILTERING
         });
 
         skybox = new Skybox(gl, new Cubemap(gl, [
@@ -410,10 +500,6 @@
             last_time = time;
 
             x_pos = 0.0;
-
-            fbm_drawer.sample_fbm(
-                gl, noise_tex, 42, 256, 256, x_pos, 0.0
-            )
 
             // update view matrix
 
@@ -442,7 +528,7 @@
                 camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), camera.up, speed));
             }
             if (camera.keys["r"]) {
-                camera.position = vec3.fromValues(0.0, 0.0, -10.0);
+                camera.position = vec3.fromValues(0.0, 5.0, -10.0);
             }
 
 
@@ -473,19 +559,13 @@
 
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-            const fieldOfView = 45 * Math.PI / 180;
+            const fieldOfView = camera.fov * Math.PI / 180;
             const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
             const zNear = 0.1;
             const zFar = 100.0;
             const projectionMatrix = mat4.create();
 
             mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar);
-
-            const terrainModelMat = mat4.create();
-
-            mat4.translate(terrainModelMat, terrainModelMat, [0.0, 0.0, 0.0]);
-            mat4.scale(terrainModelMat, terrainModelMat, [8.0, 4.0, 8.0]);
-            mat4.rotate(terrainModelMat, terrainModelMat, Math.PI / 2, [1.0, 0.0, 0.0]);
 
             // Draw Skybox
 
@@ -498,12 +578,9 @@
             const skyboxModelMat = mat4.create();
             mat4.translate(skyboxModelMat, skyboxModelMat, camera.position);
             mat4.scale(skyboxModelMat, skyboxModelMat, [50.0, 50.0, 50.0]);
-            mat4.rotate(skyboxModelMat, skyboxModelMat, -Math.PI / 8, [1.0, 0.0, 0.0]);
-            const skyboxViewMatrix = mat4.create();
-            mat4.copy(skyboxViewMatrix, viewMatrix);
 
             const modelViewMatrix = mat4.create();
-            mat4.multiply(modelViewMatrix, skyboxViewMatrix, skyboxModelMat);
+            mat4.multiply(modelViewMatrix, viewMatrix, skyboxModelMat);
 
             gl.uniformMatrix4fv(skybox.program.info.uModelViewMatrix, false, modelViewMatrix);
             gl.uniformMatrix4fv(skybox.program.info.uProjectionMatrix, false, projectionMatrix);
@@ -523,13 +600,10 @@
 
             gl.uniformMatrix4fv(programInfo.u_locations.proj_mat, false, projectionMatrix);
             gl.uniformMatrix4fv(programInfo.u_locations.view_mat, false, viewMatrix);
-            gl.uniformMatrix4fv(programInfo.u_locations.model_mat, false, terrainModelMat);
+
             gl.uniform2f(programInfo.u_locations.offset, x_pos, 0.0);
             gl.uniform4fv(programInfo.u_camera_position, camera.position);
 
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, noise_tex);
-            gl.uniform1i(programInfo.u_noise_texture, 0);
 
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, grass.texture);
@@ -547,7 +621,51 @@
             gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox.cubemap.cubemap);
             gl.uniform1i(programInfo.u_cube_texture, 4);
 
-            console.log(programInfo);
+
+            for (let key in chunks) {
+                let chunk = chunks[key];
+
+                // Frustum culling
+                const chunk_world_pos = vec3.fromValues(chunk.coordinate[0] * chunk_scale, 0.0, chunk.coordinate[1] * chunk_scale);
+                const chunk_world_radius = Math.sqrt(2) * chunk_scale * 0.5 * 2.0;
+
+                // check if the chunk is in the frustum
+                const frustum = calculate_frustum(projectionMatrix, viewMatrix);
+
+                let in_frustum = false;
+                for (let plane of frustum) {
+                    let distance = vec3.dot(plane, chunk_world_pos) + plane[3];
+                    if (distance < -chunk_world_radius) {
+                        in_frustum = false;
+                        break;
+                    }
+                    in_frustum = true;
+                }
+
+                if (!in_frustum) {
+                    continue;
+                }
+
+                gl.uniform2f(programInfo.u_locations.offset, chunk.coordinate[0], chunk.coordinate[1]);
+                const terrainModelMat = mat4.create();
+
+                mat4.translate(terrainModelMat, terrainModelMat, [chunk.coordinate[0] * chunk_scale,
+                -chunk_elevation_scale * 0.5
+                    , chunk.coordinate[1] * chunk_scale]);
+                mat4.scale(terrainModelMat, terrainModelMat,
+                    [chunk_scale,
+                        chunk_elevation_scale,
+                        chunk_scale]);
+                mat4.rotate(terrainModelMat, terrainModelMat, Math.PI / 2, [1.0, 0.0, 0.0]);
+
+                gl.uniformMatrix4fv(programInfo.u_locations.model_mat, false, terrainModelMat);
+
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, chunk.elevation.texture);
+                gl.uniform1i(programInfo.u_noise_texture, 0);
+
+                gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
+            }
             gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
 
             gl.disable(gl.CULL_FACE);

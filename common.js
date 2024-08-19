@@ -402,8 +402,9 @@ class FBM {
             precision highp float;
 
             // HIGHER IS MORE
-            #define AMPLITUDE 2.0
-            #define OCTAVES 12
+            #define SQRT_2 1.41421356237
+            #define AMPLITUDE SQRT_2
+            #define OCTAVES 10
 
             float random (in vec2 st, in float seed) {
                 return fract(cos(sin(dot(st.xy,
@@ -448,7 +449,7 @@ class FBM {
 
             void main(void) {
 
-                float v = fbm((vUv + uSampleOffset) * AMPLITUDE, uSeed);
+                float v = fbm((vUv + uSampleOffset), uSeed);
 
                 gl_FragColor = vec4(v, v, v, 1.0);
             }
@@ -528,7 +529,29 @@ class ImageTexture2D {
 
 }
 
+class NoiseTexture2D {
+    constructor(ctx, width, height) {
+        this.texture = ctx.createTexture();
+        ctx.bindTexture(ctx.TEXTURE_2D, this.texture);
+        ctx.texImage2D(
+            ctx.TEXTURE_2D,
+            0,
+            ctx.RGBA,
+            width,
+            height,
+            0,
+            ctx.RGBA,
+            ctx.UNSIGNED_BYTE,
+            null
+        );
 
+        ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_S, ctx.CLAMP_TO_EDGE);
+        ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_T, ctx.CLAMP_TO_EDGE);
+        ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MIN_FILTER, ctx.LINEAR);
+
+
+    }
+}
 class Cubemap {
     constructor(ctx, faces) {
 
@@ -607,4 +630,66 @@ class Skybox {
 
         this.skybox = gen_cube(ctx);
     }
+}
+
+function calculate_frustum(projectionMatrix, viewMatrix) {
+    let frustum = [];
+
+    const clip = mat4.create();
+    mat4.multiply(clip, projectionMatrix, viewMatrix);
+
+    // right
+    frustum.push(vec4.fromValues(
+        clip[3] - clip[0],
+        clip[7] - clip[4],
+        clip[11] - clip[8],
+        clip[15] - clip[12]
+    ));
+
+    // left
+    frustum.push(vec4.fromValues(
+        clip[3] + clip[0],
+        clip[7] + clip[4],
+        clip[11] + clip[8],
+        clip[15] + clip[12]
+    ));
+
+    // bottom
+    frustum.push(vec4.fromValues(
+        clip[3] + clip[1],
+        clip[7] + clip[5],
+        clip[11] + clip[9],
+        clip[15] + clip[13]
+    ));
+
+    // top
+    frustum.push(vec4.fromValues(
+        clip[3] - clip[1],
+        clip[7] - clip[5],
+        clip[11] - clip[9],
+        clip[15] - clip[13]
+    ));
+
+    // far
+    frustum.push(vec4.fromValues(
+        clip[3] - clip[2],
+        clip[7] - clip[6],
+        clip[11] - clip[10],
+        clip[15] - clip[14]
+    ));
+
+    // near
+    frustum.push(vec4.fromValues(
+        clip[3] + clip[2],
+        clip[7] + clip[6],
+        clip[11] + clip[10],
+        clip[15] + clip[14]
+    ));
+
+    for (let i = 0; i < frustum.length; i++) {
+        let length = vec3.length(frustum[i]);
+        frustum[i] = vec4.scale(frustum[i], frustum[i], 1.0 / length);
+    }
+
+    return frustum;
 }
