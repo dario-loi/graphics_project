@@ -525,22 +525,29 @@ class ImageTexture2D {
         this.image = new Image();
         this.image.onload = () => {
 
-        ctx.bindTexture(ctx.TEXTURE_2D, this.texture);
-        ctx.texImage2D(ctx.TEXTURE_2D, 0, ctx.RGBA, ctx.RGBA, ctx.UNSIGNED_BYTE, this.image);
-        ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_S, image_attrs.wrap_s);
-        ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_T, image_attrs.wrap_t);
+            ctx.bindTexture(ctx.TEXTURE_2D, this.texture);
+            ctx.texImage2D(ctx.TEXTURE_2D, 0, ctx.RGBA, ctx.RGBA, ctx.UNSIGNED_BYTE, this.image);
+            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_S, image_attrs.wrap_s);
+            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_T, image_attrs.wrap_t);
+            
+            const ext = gl.getExtension("EXT_texture_filter_anisotropic") ||
+                gl.getExtension("MOZ_EXT_texture_filter_anisotropic") ||
+                gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
+            if (ext) {
+                ctx.texParameterf(ctx.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT, image_attrs.anisotropy);
+            }
 
-        if(image_attrs.generate_mipmaps) {
-            ctx.generateMipmap(ctx.TEXTURE_2D);
-            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MIN_FILTER, ctx.LINEAR_MIPMAP_LINEAR);
-            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MAG_FILTER, ctx.LINEAR);
-        } else {
-            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MIN_FILTER, ctx.LINEAR);
-            ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MAG_FILTER, ctx.LINEAR);
-        }
+            if(image_attrs.generate_mipmaps) {
+                ctx.generateMipmap(ctx.TEXTURE_2D);
+                ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MIN_FILTER, ctx.LINEAR_MIPMAP_LINEAR);
+                ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MAG_FILTER, ctx.LINEAR);
+            } else {
+                ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MIN_FILTER, ctx.LINEAR);
+                ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_MAG_FILTER, ctx.LINEAR);
+            }
 
-            ctx.bindTexture(ctx.TEXTURE_2D, null);
-        }
+                ctx.bindTexture(ctx.TEXTURE_2D, null);
+            }
 
         this.image.src = image_filepath;
         
@@ -563,11 +570,20 @@ class Cubemap {
             image.onload = () => {
                 ctx.bindTexture(ctx.TEXTURE_CUBE_MAP, this.cubemap);
                 ctx.texImage2D(ctx.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, ctx.RGBA, ctx.RGBA, ctx.UNSIGNED_BYTE, image);
+
+
                 ctx.bindTexture(ctx.TEXTURE_CUBE_MAP, null);
             }
             image.src = face_path;
         }
 
+        const ext = ctx.getExtension("WEBGL_texture_filter_anisotropic") ||
+            ctx.getExtension("MOZ_EXT_texture_filter_anisotropic") ||
+            ctx.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
+        
+        if (ext) {
+            ctx.texParameterf(ctx.TEXTURE_CUBE_MAP, ext.TEXTURE_MAX_ANISOTROPY_EXT, 16);
+        }
 
         ctx.texParameteri(ctx.TEXTURE_CUBE_MAP, ctx.TEXTURE_WRAP_S, ctx.REPEAT);
         ctx.texParameteri(ctx.TEXTURE_CUBE_MAP, ctx.TEXTURE_WRAP_T, ctx.REPEAT);

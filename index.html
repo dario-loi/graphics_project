@@ -146,7 +146,33 @@
         let chunks = [];
         let last_time = 0.0;
 
-        // DECLARE PERIODIC EVEMTS
+        let camera = {
+            yaw: 0.0,
+            pitch: 0.0,
+            sensitivity: 0.002,
+            is_locked: false,
+            delta_x: 0.0,
+            delta_y: 0.0,
+            position: vec3.fromValues(0.0, 0.0, -10.0),
+            up: vec3.fromValues(0.0, 1.0, 0.0),
+            front: vec3.fromValues(0.0, 0.0, 1.0),
+            speed: 0.001,
+            sprint_multiplier: 2.5,
+            keys: {
+                "w": false,
+                "a": false,
+                "s": false,
+                "d": false,
+                "shift": false,
+                "space": false,
+                "ctrl": false
+            }
+        };
+
+
+
+
+        // DECLARE PERIODIC EVENTS
 
         // schema: {name: string, interval: number, func: function}
         lambdas = [
@@ -192,6 +218,55 @@
                         gl.viewport(0, 0, canvas.width, canvas.height);
                     }
                 }
+            },
+            {
+                "name": "mouse_lock",
+                "exec_first": false,
+                "trigger": "click",
+                "func": function () {
+                    canvas.requestPointerLock();
+                }
+            },
+            {
+                "name": "mouse_unlock",
+                "exec_first": false,
+                "trigger": "pointerlockchange",
+                "func": function () {
+                    if (document.pointerLockElement === canvas) {
+                        camera.is_locked = true;
+                    } else {
+                        camera.is_locked = false;
+                    }
+                }
+            },
+            {
+                "name": "mouse_move",
+                "exec_first": false,
+                "trigger": "mousemove",
+                "func": function (event) {
+                    if (camera.is_locked) {
+                        camera.delta_x = event.movementX;
+                        camera.delta_y = -event.movementY;
+                    }
+                }
+            },
+            {
+                "name": "handle_keydown",
+                "exec_first": false,
+                "trigger": "keydown",
+                "func": function (event) {
+
+                    key = event.key.toLowerCase();
+                    camera.keys[key] = true;
+                }
+            }, {
+                "name": "handle_keyup",
+                "exec_first": false,
+                "trigger": "keyup",
+                "func": function (event) {
+                    key = event.key.toLowerCase();
+                    camera.keys[key] = false;
+                }
             }
         ]
 
@@ -211,8 +286,8 @@
             gl.TEXTURE_2D,
             0,
             gl.RGBA,
-            128,
-            128,
+            256,
+            256,
             0,
             gl.RGBA,
             gl.UNSIGNED_BYTE,
@@ -228,13 +303,14 @@
         // vertices 3
         // uvs 2
         // normals 3
-        buffers = gen_quad(gl, 128);
+        buffers = gen_quad(gl, 256);
 
         // RENDER LOOP
         let grass = new ImageTexture2D(gl, "grass.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
-            generate_mipmaps: true
+            generate_mipmaps: true,
+            anisotropy: 16
         });
 
         skybox = new Skybox(gl, new Cubemap(gl, [
@@ -253,12 +329,62 @@
 
             last_time = time;
 
-            x_pos = time / 10000.0;
+            x_pos = 0.0;
 
             fbm_drawer.sample_fbm(
-                gl, noise_tex, 42, 128, 128, x_pos, 0.0
+                gl, noise_tex, 42, 256, 256, x_pos, 0.0
             )
 
+            // update view matrix
+
+            let speed = camera.speed;
+            if (camera.keys["shift"]) {
+                speed *= camera.sprint_multiplier;
+            }
+            speed *= delta_time;
+
+            if (camera.keys["w"]) {
+                camera.position = vec3.add(camera.position, camera.position, vec3.scale(vec3.create(), camera.front, speed));
+            }
+            if (camera.keys["s"]) {
+                camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), camera.front, speed));
+            }
+            if (camera.keys["a"]) {
+                camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), vec3.normalize(vec3.create(), vec3.cross(vec3.create(), camera.front, camera.up)), speed));
+            }
+            if (camera.keys["d"]) {
+                camera.position = vec3.add(camera.position, camera.position, vec3.scale(vec3.create(), vec3.normalize(vec3.create(), vec3.cross(vec3.create(), camera.front, camera.up)), speed));
+            }
+            if (camera.keys[" "]) {
+                camera.position = vec3.add(camera.position, camera.position, vec3.scale(vec3.create(), camera.up, speed));
+            }
+            if (camera.keys["control"]) {
+                camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), camera.up, speed));
+            }
+            if (camera.keys["r"]) {
+                camera.position = vec3.fromValues(0.0, 0.0, -10.0);
+            }
+
+
+            if (camera.is_locked) {
+                camera.yaw += camera.delta_x * camera.sensitivity;
+                camera.pitch += camera.delta_y * camera.sensitivity;
+                camera.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.pitch));
+                camera.delta_x = 0.0;
+                camera.delta_y = 0.0;
+            }
+
+            const front = vec3.fromValues(
+                Math.cos(camera.yaw) * Math.cos(camera.pitch),
+                Math.sin(camera.pitch),
+                Math.sin(camera.yaw) * Math.cos(camera.pitch)
+            );
+
+            camera.front = vec3.normalize(camera.front, front);
+
+            const viewMatrix = mat4.lookAt(mat4.create(), camera.position,
+                vec3.add(vec3.create(), camera.position, camera.front),
+                camera.up);
 
             gl.clearColor(0., 0., 0., 1.0);
             gl.clearDepth(1.0);
@@ -276,16 +402,13 @@
             mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar);
 
             const terrainModelMat = mat4.create();
-            const viewMatrix = mat4.create();
 
 
-            mat4.translate(terrainModelMat, terrainModelMat, [-2.0, 0.0, 0.0]);
-            mat4.scale(terrainModelMat, terrainModelMat, [4.0, 4.0, 4.0]);
+            mat4.translate(terrainModelMat, terrainModelMat, [0.0, 0.0, 0.0]);
+            mat4.scale(terrainModelMat, terrainModelMat, [8.0, 4.0, 8.0]);
             mat4.rotate(terrainModelMat, terrainModelMat, Math.PI / 2, [1.0, 0.0, 0.0]);
 
             //mat4.rotate(terrainModelMat, terrainModelMat, performance.now() / 2000 * Math.PI, [0.0, 1.0, 0.0]);
-            mat4.translate(viewMatrix, viewMatrix, [0.0, 0.0, -14.0]);
-            mat4.rotate(viewMatrix, viewMatrix, Math.PI / 6, [1.0, 0.0, 0.0]);
 
             // Draw Skybox
 
@@ -296,6 +419,7 @@
             gl.disable(gl.DEPTH_TEST);
 
             const skyboxModelMat = mat4.create();
+            mat4.translate(skyboxModelMat, skyboxModelMat, camera.position);
             mat4.scale(skyboxModelMat, skyboxModelMat, [50.0, 50.0, 50.0]);
             mat4.rotate(skyboxModelMat, skyboxModelMat, -Math.PI / 8, [1.0, 0.0, 0.0]);
             const skyboxViewMatrix = mat4.create();
@@ -317,6 +441,9 @@
 
             gl.bindVertexArray(buffers.quad_vao);
 
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+
             gl.uniformMatrix4fv(programInfo.u_locations.proj_mat, false, projectionMatrix);
             gl.uniformMatrix4fv(programInfo.u_locations.view_mat, false, viewMatrix);
             gl.uniformMatrix4fv(programInfo.u_locations.model_mat, false, terrainModelMat);
@@ -331,6 +458,9 @@
             gl.uniform1i(programInfo.u_texture, 1);
 
             gl.drawArrays(gl.TRIANGLES, 0, buffers.n_triangles * 3);
+
+            gl.disable(gl.CULL_FACE);
+            gl.disable(gl.DEPTH_TEST);
 
             // check for errors
             let error = gl.getError();
