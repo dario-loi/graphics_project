@@ -496,7 +496,8 @@ class ImageTexture2D {
         this.image.onload = () => {
 
             ctx.bindTexture(ctx.TEXTURE_2D, this.texture);
-            ctx.texImage2D(ctx.TEXTURE_2D, 0, ctx.RGBA, ctx.RGBA, ctx.UNSIGNED_BYTE, this.image);
+            // load linearly
+            ctx.texImage2D(ctx.TEXTURE_2D, 0, ctx.SRGB8_ALPHA8, ctx.RGBA, ctx.UNSIGNED_BYTE, this.image);
             ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_S, image_attrs.wrap_s);
             ctx.texParameteri(ctx.TEXTURE_2D, ctx.TEXTURE_WRAP_T, image_attrs.wrap_t);
             
@@ -561,7 +562,7 @@ class Cubemap {
             let image = new Image();
             image.onload = () => {
                 ctx.bindTexture(ctx.TEXTURE_CUBE_MAP, this.cubemap);
-                ctx.texImage2D(ctx.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, ctx.RGBA, ctx.RGBA, ctx.UNSIGNED_BYTE, image);
+                ctx.texImage2D(ctx.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, ctx.SRGB8_ALPHA8, ctx.RGBA, ctx.UNSIGNED_BYTE, image);
 
 
                 ctx.bindTexture(ctx.TEXTURE_CUBE_MAP, null);
@@ -610,7 +611,9 @@ class Skybox {
             uniform samplerCube uCubemap;
 
             void main(void) {
-                gl_FragColor = textureCube(uCubemap, vTexCoords);
+                vec3 color = textureCube(uCubemap, vTexCoords).rgb;
+                color = pow(color, vec3(1.0/2.2));
+                gl_FragColor = vec4(color, 1.0);
             }
         `;
 

@@ -66,15 +66,15 @@
             </div>
             <div class="flex flex-row justify-between items-center my-2">
                 <label for="chunk-scale" class="mx-2">Chunk Scale</label>
-                <input type="range" id="chunk-scale" name="chunk-scale" min="1.0" max="32.0" value="16.0" step="1.0"
+                <input type="range" id="chunk-scale" name="chunk-scale" min="1.0" max="32.0" value="32.0" step="1.0"
                     class="flex-grow mx-2">
-                <span id="chunk-scale-value" class="mx-2">16</span>
+                <span id="chunk-scale-value" class="mx-2">32</span>
             </div>
             <div class="flex flex-row justify-between items-center my-2">
                 <label for="elevation-scale" class="mx-2">Chunk Elevation Scale</label>
-                <input type="range" id="elevation-scale" name="elevation-scale" min="1.0" max="50.0" value="8.0"
+                <input type="range" id="elevation-scale" name="elevation-scale" min="1.0" max="50.0" value="32.0"
                     step="0.5" class="flex-grow mx-2">
-                <span id="elevation-scale-value" class="mx-2">8</span>
+                <span id="elevation-scale-value" class="mx-2">32</span>
             </div>
         </div>
     </div>
@@ -111,9 +111,6 @@
 
         fbm_drawer = new FBM(gl);
 
-        // backface culling
-        // gl.enable(gl.CULL_FACE);
-
         // Vertex shader program
         const vsSource = `#version 300 es
             in vec4 aVertexPosition;
@@ -144,13 +141,17 @@
 
         // Fragment shader program
         const fsSource = `#version 300 es
+            #line 147
             precision highp float;
 
             uniform sampler2D uSampler;
             uniform sampler2D uNoiseSampler;
             uniform sampler2D uNormalSampler;
-            uniform sampler2D uOcclusionSampler;
             uniform sampler2D uRoughnessSampler;
+
+            uniform sampler2D uSamplerSnow;
+            uniform sampler2D uNormalSamplerSnow;
+            uniform sampler2D uRoughnessSamplerSnow;
             
             uniform samplerCube uSkybox;
             
@@ -176,21 +177,36 @@
                 vec3 dx = dFdx(vWorldPosition.xyz);
                 vec3 dy = dFdy(vWorldPosition.xyz);
 
-                vec3 normal = normalize(cross(dx, dy));
+                vec3 face_normal = normalize(cross(dx, dy));
+
+                // height-dependent texture fetch
+                // around 0.8, blend between grass and snow
+
+                vec3 normal_grass = normalize(texture(uNormalSampler, vUv).xyz);
+                vec3 normal_snow = normalize(texture(uNormalSampler, vUv).xyz);
+
+                vec3 color_grass = texture(uSampler, vUv).rgb;
+                vec3 color_snow = texture(uSamplerSnow, vUv).rgb;
+
+                float roughness_grass = texture(uRoughnessSampler, vUv).r;
+                float roughness_snow = texture(uRoughnessSamplerSnow, vUv).r;
+
+                float blend = smoothstep(0.7, 0.8, 1.0 - vHeight);
+
+                vec3 normal = mix(normal_grass, normal_snow, blend);
+                vec3 albedo = mix(color_grass, color_snow, blend);
+                float roughness = mix(roughness_grass, roughness_snow, blend);
+
 
                 // TBN
                 vec3 T = normalize(dx);
                 vec3 B = normalize(dy);
-                vec3 N = normalize(normal);
+                vec3 N = normalize(face_normal);
 
                 mat3 TBN = mat3(T, B, N);
 
-                normal = texture(uNormalSampler, vUv).xyz;
                 normal = normalize(normal * 2.0 - 1.0);
-
                 normal = normalize(TBN * normal);
-
-                float occlusion = texture(uOcclusionSampler, vUv).r;
 
                 vec3 sun_dir = -uSunDirection.xyz;
 
@@ -199,11 +215,9 @@
                 vec3 view_dir = normalize(uCameraPosition.xyz - vWorldPosition.xyz);
                 vec3 half_dir = normalize(sun_dir + view_dir);
 
-                float roughness = texture(uRoughnessSampler, vUv).r;
-
                 float specular = 0.0;
                 if (diffuse > 0.0) {
-                    specular = pow(max(dot(normal, half_dir), 0.0), 32.0) * (1.0 - roughness) * 0.75;
+                    specular = pow(max(dot(normal, half_dir), 0.0), 8.0) * (1.0 - roughness) * 0.75;
                 }
 
                 // ambient light from the skybox
@@ -212,7 +226,10 @@
                 vec3 skybox_color = texture(uSkybox, R).rgb * (1.0 - roughness) * 0.25;
 
                 float light = (diffuse + specular);
-                vec3 color = texture(uSampler, vUv).rgb * (ambient + skybox_color + uSunColor.rgb * light * occlusion);
+                vec3 color = albedo * (ambient + skybox_color + uSunColor.rgb * light);
+
+                // gamma
+                color = pow(color, vec3(1.0 / 2.2));
 
                 fragColor = vec4(color, 1.0);
             }
@@ -237,16 +254,15 @@
             u_texture: gl.getUniformLocation(shaderProgram, 'uSampler'),
             u_noise_texture: gl.getUniformLocation(shaderProgram, 'uNoiseSampler'),
             u_normals_texture: gl.getUniformLocation(shaderProgram, 'uNormalSampler'),
-            u_occlusion_texture: gl.getUniformLocation(shaderProgram, 'uOcclusionSampler'),
             u_roughness_texture: gl.getUniformLocation(shaderProgram, 'uRoughnessSampler'),
             u_cube_texture: gl.getUniformLocation(shaderProgram, 'uSkybox'),
         };
 
         // INIT "GLOBALS"
 
-        let chunk_scale = 16.0;
-        let chunk_elevation_scale = 8.0;
-        let spawn_radius = 4.0;
+        let chunk_scale = 32.0;
+        let chunk_elevation_scale = 32.0;
+        let spawn_radius = 10.0;
 
         let chunks = {};
 
@@ -280,9 +296,7 @@
             distance: 80.0,
             angle: 0.0,
             color: vec3.fromValues(253.0 / 255.0, 251.0 / 255.0, 211.0 / 255.0), // Homebase Sunlight / #fdfbd3
-            position: vec3.fromValues(0.0, 0.0, 0.0),   // TEMPORARY, will be calculated according to camera position
             light_dir: vec3.fromValues(0.0, 0.0, 0.0),  // Ditto
-            to_camera: vec3.fromValues(0.0, 0.0, 0.0),  // Ditto
         };
 
         // DECLARE PERIODIC EVENTS
@@ -481,14 +495,28 @@
             anisotropy: ANISOTROPIC_FILTERING
         });
 
-        let grass_occlusion = new ImageTexture2D(gl, "textures/grass_occlusion.png", {
+        let grass_roughness = new ImageTexture2D(gl, "textures/grass_roughness.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
             anisotropy: ANISOTROPIC_FILTERING
         });
 
-        let grass_rooughness = new ImageTexture2D(gl, "textures/grass_roughness.png", {
+        let snow = new ImageTexture2D(gl, "textures/snow_diffuse.png", {
+            wrap_s: gl.REPEAT,
+            wrap_t: gl.REPEAT,
+            generate_mipmaps: true,
+            anisotropy: ANISOTROPIC_FILTERING
+        });
+
+        let snow_normals = new ImageTexture2D(gl, "textures/snow_normal.png", {
+            wrap_s: gl.REPEAT,
+            wrap_t: gl.REPEAT,
+            generate_mipmaps: true,
+            anisotropy: ANISOTROPIC_FILTERING
+        });
+
+        let snow_roughness = new ImageTexture2D(gl, "textures/snow_roughness.png", {
             wrap_s: gl.REPEAT,
             wrap_t: gl.REPEAT,
             generate_mipmaps: true,
@@ -503,59 +531,6 @@
             "skybox/front.jpg",
             "skybox/back.jpg",
         ]));
-
-        let shadow_fb = gl.createFramebuffer();
-
-        const SHADOW_MAP_SIZE = 2048;
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, shadow_fb);
-
-        let shadow_depth_attachment = gl.createTexture();
-
-        gl.bindTexture(gl.TEXTURE_2D, shadow_depth_attachment); // unbiased depth
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT32F, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, gl.DEPTH_COMPONENT, gl.FLOAT, null);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadow_depth_attachment, 0);
-
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-
-        // Draw a cube where the light is
-
-        let cube = gen_cube(gl);
-
-        let cube_program = initShaderProgram(gl, `#version 300 es
-            in vec4 aVertexPosition;
-            uniform mat4 uModelMatrix;
-            uniform mat4 uViewMatrix;
-            uniform mat4 uProjectionMatrix;
-
-            void main(void) {
-                gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * aVertexPosition;
-            }
-        `, `#version 300 es
-            precision highp float;
-
-            out vec4 fragColor;
-
-            void main(void) {
-                fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-            }
-        `);
-
-        let cube_program_info = {
-            u_locations: {
-                proj_mat: gl.getUniformLocation(cube_program, 'uProjectionMatrix'),
-                view_mat: gl.getUniformLocation(cube_program, 'uViewMatrix'),
-                model_mat: gl.getUniformLocation(cube_program, 'uModelMatrix'),
-            }
-        };
-
-
 
         function render() {
 
@@ -630,12 +605,15 @@
             const fieldOfView = camera.fov * Math.PI / 180;
             const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
             const zNear = 0.1;
-            const zFar = 100.0;
+            const zFar = 250.0;
             const projectionMatrix = mat4.create();
 
             mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar);
 
             // Draw Skybox
+            // Camera direction when looking at the sun from the origin
+            // Float32Array(3)[-0.5065688490867615, 0.5089805126190186, -0.6959359645843506]
+
 
             sun.position = vec3.fromValues(
                 camera.position[0] + sun.distance * Math.cos(sun.angle),
@@ -643,9 +621,13 @@
                 camera.position[2]
             );
 
-            sun.light_dir = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), vec3.fromValues(0.0, 0.0, 0.0), sun.position));
-            sun.to_camera = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), camera.position, sun.position));
-            sun.angle = Math.PI / 2;
+            sun.light_dir = vec3.fromValues(
+                -0.5065688490867615,
+                0.5089805126190186,
+                -0.6959359645843506
+            );
+
+            sun.light_dir = vec3.normalize(sun.light_dir, vec3.negate(sun.light_dir, sun.light_dir));
 
             gl.useProgram(skybox.program);
 
@@ -694,16 +676,25 @@
             gl.uniform1i(programInfo.u_normals_texture, 2);
 
             gl.activeTexture(gl.TEXTURE3);
-            gl.bindTexture(gl.TEXTURE_2D, grass_occlusion.texture);
-            gl.uniform1i(programInfo.u_occlusion_texture, 3);
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox.cubemap.cubemap);
+            gl.uniform1i(programInfo.u_cube_texture, 3);
 
             gl.activeTexture(gl.TEXTURE4);
-            gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox.cubemap.cubemap);
-            gl.uniform1i(programInfo.u_cube_texture, 4);
+            gl.bindTexture(gl.TEXTURE_2D, grass_roughness.texture);
+            gl.uniform1i(programInfo.u_roughness_texture, 4);
+
+            gl.activeTexture(gl.TEXTURE5);
+            gl.bindTexture(gl.TEXTURE_2D, snow.texture);
+            gl.uniform1i(programInfo.u_sampler_snow, 5);
 
             gl.activeTexture(gl.TEXTURE6);
-            gl.bindTexture(gl.TEXTURE_2D, grass_rooughness.texture);
-            gl.uniform1i(programInfo.u_roughness_texture, 6);
+            gl.bindTexture(gl.TEXTURE_2D, snow_normals.texture);
+            gl.uniform1i(programInfo.u_normal_sampler_snow, 6);
+
+            gl.activeTexture(gl.TEXTURE7);
+            gl.bindTexture(gl.TEXTURE_2D, snow_roughness.texture);
+            gl.uniform1i(programInfo.u_roughness_sampler_snow, 7);
+
 
             const camera_frustum = calculate_frustum(projectionMatrix, viewMatrix);
 
@@ -751,24 +742,8 @@
             }
             gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
 
-            gl.useProgram(cube_program);
-
-            gl.bindVertexArray(cube.vao);
-
-            const cubeModelMat = mat4.create();
-            mat4.translate(cubeModelMat, cubeModelMat, sun.position);
-            mat4.scale(cubeModelMat, cubeModelMat, [0.5, 0.5, 0.5]);
-
-            gl.uniformMatrix4fv(cube_program_info.u_locations.proj_mat, false, projectionMatrix);
-            gl.uniformMatrix4fv(cube_program_info.u_locations.view_mat, false, viewMatrix);
-            gl.uniformMatrix4fv(cube_program_info.u_locations.model_mat, false, cubeModelMat);
-
-            gl.drawElements(gl.TRIANGLES, cube.n_elements, gl.UNSIGNED_SHORT, 0);
-
-
             gl.disable(gl.CULL_FACE);
             gl.disable(gl.DEPTH_TEST);
-
 
             // update fps counter
             let fps = 1000.0 / delta_time;
