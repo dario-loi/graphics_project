@@ -142,8 +142,6 @@ function gen_quad(ctx, resolution) {
 
     ctx.bindVertexArray(null);
 
-
-
     return {
         vao: quad_vao,
         n_elements: indices.length
@@ -384,8 +382,6 @@ class PerlinNoise {
 
 
 class FBM {
-
-
     constructor(ctx) {
         let fbm_vs = `
             attribute vec4 aVertexPosition;
