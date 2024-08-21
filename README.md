@@ -9,8 +9,10 @@
 > * Grass https://polyhaven.com/a/aerial_grass_rock
 > * Snow https://polyhaven.com/a/snow_02
 > * Skybox https://learnopengl.com/img/textures/skybox.zip
+>
+> Alternatively, you can find them all zipped in a release for this repository: https://github.com/dario-loi/graphics_project/releases/tag/textures
 > 
-> Place the textures in the `textures` folder and the skybox in the `skybox` folder.
+> Place the textures in the `textures` folder and the skybox in the `skybox` folder and rename them according to the source code.
 
 This project implements an infinite terrain generator through the use of fractal brownian motion (fBm). 
 
