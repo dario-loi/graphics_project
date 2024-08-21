@@ -397,11 +397,6 @@ class FBM {
         let fbm_fs = `
             precision highp float;
 
-            // HIGHER IS MORE
-            #define SQRT_2 1.41421356237
-            #define AMPLITUDE SQRT_2
-            #define OCTAVES 10
-
             float random (in vec2 st, in float seed) {
                 return fract(cos(sin(dot(st.xy,
                                     vec2(12.9898,78.233))))*
@@ -427,29 +422,34 @@ class FBM {
                         (d - b) * u.x * u.y;
             }
 
-            float fbm (in vec2 st, in float seed) {
+            #define OCTAVES 12.0
+
+            float fbm (in vec2 st, in float seed, in float gain, in float lacunarity) {
                 float value = 0.0;
-                float amplitude = 0.44;
+                float amplitude = gain;
                 float frequency = 1.0;
-                for (int i = 0; i < OCTAVES; i++) {
+                for (float i = 0.0; i < OCTAVES; i++) {
                     value += amplitude * noise(st * frequency, seed);
-                    frequency *= 2.0;
-                    amplitude *= 0.44;
+                    frequency *= lacunarity;
+                    amplitude *= gain;
                 }
                 return value;
             }
 
             varying highp vec2 vUv;
             uniform vec2 uSampleOffset;
-            uniform float uSeed;
+            uniform highp float uSeed;
+            uniform highp float uGain;
+            uniform highp float uLacunarity;
 
             void main(void) {
 
-                float v = fbm((vUv + uSampleOffset), uSeed);
+                float v = fbm((vUv + uSampleOffset), uSeed, uGain, uLacunarity);
 
                 gl_FragColor = vec4(v, v, v, 1.0);
-            }
-                `;
+            }`;
+        
+        
         
         this.program = initShaderProgram(ctx, fbm_vs, fbm_fs);
         this.program.info = {
@@ -457,10 +457,15 @@ class FBM {
             aVertexUv: ctx.getAttribLocation(this.program, 'aVertexUv'),
             uSeed: ctx.getUniformLocation(this.program, 'uSeed'),
             uSampleOffset: ctx.getUniformLocation(this.program, 'uSampleOffset'),
+            uGain: ctx.getUniformLocation(this.program, 'uGain'),
+            uLacunarity: ctx.getUniformLocation(this.program, 'uLacunarity'),
         };
 
         this.target_quad = gen_quad(ctx, 2);
         this.target_framebuffer = ctx.createFramebuffer();
+
+        this.gain = 0.5;
+        this.lacunarity = 2.0;
     }
 
     sample_fbm(ctx, texture, seed, width, height, x, y) {
@@ -478,6 +483,9 @@ class FBM {
             
         ctx.uniform2f(this.program.info.uSampleOffset, x, y);
         ctx.uniform1f(this.program.info.uSeed, seed);
+        ctx.uniform1f(this.program.info.uGain, this.gain);
+        ctx.uniform1f(this.program.info.uLacunarity, this.lacunarity);
+
         ctx.drawElements(ctx.TRIANGLES, this.target_quad.n_elements, ctx.UNSIGNED_SHORT, 0);
         
         ctx.bindVertexArray(null);

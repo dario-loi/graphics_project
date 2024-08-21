@@ -55,7 +55,7 @@
         <canvas id="webgl-canvas"></canvas>
     </div>
     <div id="info" class="flex flex-col justify-center items-center">
-        <div id="fps-counter">FPS: 0</div>
+        <div id="fps-counter" class="my-2 h-10">FPS: 0.0</div>
         <!-- List of sliders for settings -->
         <div class="flex flex-col justify-left items-left w-full">
             <div class="flex flex-row justify-between items-center my-2">
@@ -76,6 +76,40 @@
                     step="0.5" class="flex-grow mx-2">
                 <span id="elevation-scale-value" class="mx-2">32</span>
             </div>
+            <div class="flex flex-col justify-left items-left w-full">
+                <label for="noisegen-gain" class="mx-2">Noise Generator Gain</label>
+                <input type="range" id="noisegen-gain" name="noisegen-gain" min="0.01" max="1.0" value="0.5" step="0.01"
+                    class="flex-grow mx-2">
+                <span id="noisegen-gain-value" class="mx-2">0.5</span>
+                <script>
+                    document.getElementById('noisegen-gain').addEventListener('input', function () {
+                        document.getElementById('noisegen-gain-value').innerText = this.value;
+                    });
+                </script>
+            </div>
+            <div class="flex flex-col justify-left items-left w-full">
+                <label for="noisegen-lacunarity" class="mx-2">Noise Generator Lacunarity</label>
+                <input type="range" id="noisegen-lacunarity" name="noisegen-lacunarity" min="0.0" max="4.0" value="2.0"
+                    step="0.01" class="flex-grow mx-2">
+                <span id="noisegen-lacunarity-value" class="mx-2">2.0</span>
+                <script>
+                    document.getElementById('noisegen-lacunarity').addEventListener('input', function () {
+                        document.getElementById('noisegen-lacunarity-value').innerText = this.value;
+                    });
+                </script>
+            </div>
+        </div>
+        <!-- Color Picker for sunlight -->
+        <div class="flex flex-col justify-left items-left w-full">
+            <label for="sun-color" class="mx-2">Sunlight Color</label>
+            <input type="color" id="sun-color" name="sun-color" value="#fdfbd3" class="flex-grow mx-2">
+            <span id="sun-color-value" class="mx-2">#fdfbd3</span>
+            <script>
+                document.getElementById('sun-color').addEventListener('input', function () {
+                    console.log(this.value);
+                    document.getElementById('sun-color-value').innerText = this.value;
+                });
+            </script>
         </div>
     </div>
 
@@ -403,7 +437,13 @@
                 "exec_first": false,
                 "trigger": "click",
                 "func": function () {
-                    canvas.requestPointerLock();
+                    if (canvas.requestPointerLock) {
+                        canvas.requestPointerLock();
+                    } else if (canvas.mozRequestPointerLock) {
+                        canvas.mozRequestPointerLock();
+                    } else if (canvas.webkitRequestPointerLock) {
+                        canvas.webkitRequestPointerLock();
+                    }
                 }
             },
             {
@@ -411,7 +451,10 @@
                 "exec_first": false,
                 "trigger": "pointerlockchange",
                 "func": function () {
-                    if (document.pointerLockElement === canvas) {
+                    if (document.pointerLockElement === canvas ||
+                        document.mozPointerLockElement === canvas ||
+                        document.webkitPointerLockElement === canvas) {
+                        canvas.focus();
                         camera.is_locked = true;
                     } else {
                         camera.is_locked = false;
@@ -424,8 +467,8 @@
                 "trigger": "mousemove",
                 "func": function (event) {
                     if (camera.is_locked) {
-                        camera.delta_x = event.movementX;
-                        camera.delta_y = -event.movementY;
+                        camera.delta_x = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                        camera.delta_y = -(event.movementY || event.mozMovementY || event.webkitMovementY || 0);
                     }
                 }
             },
@@ -457,6 +500,13 @@
             window.addEventListener(listener.trigger, listener.func);
         }
 
+        document.addEventListener('pointerlockerror', function () {
+            console.error("Pointer lock failed.");
+        });
+
+        // add
+
+
         // listeners for the sliders
 
         document.getElementById('fov').addEventListener('input', function () {
@@ -470,6 +520,40 @@
         document.getElementById('elevation-scale').addEventListener('input', function () {
             chunk_elevation_scale = parseFloat(this.value);
         });
+
+        document.getElementById('sun-color').addEventListener('input', function () {
+
+            function hexToRgb(hex) {
+                // https://stackoverflow.com/questions/5623838/rgb-to-hex-and-hex-to-rgb
+                var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : null;
+            }
+
+
+            let color = hexToRgb(this.value);
+            sun.color = vec3.fromValues(color.r / 255.0, color.g / 255.0, color.b / 255.0);
+        });
+
+        document.getElementById('noisegen-gain').addEventListener('input', function () {
+            fbm_drawer.gain = parseFloat(this.value);
+            update_noise();
+        });
+
+        document.getElementById('noisegen-lacunarity').addEventListener('input', function () {
+            fbm_drawer.lacunarity = parseFloat(this.value);
+            update_noise();
+        });
+
+        function update_noise() {
+            for (let key in chunks) {
+                let chunk = chunks[key];
+                fbm_drawer.sample_fbm(gl, chunk.elevation.texture, 42, 512, 512, chunk.coordinate[0], chunk.coordinate[1]);
+            }
+        }
 
         // PREP NOISE TARGET
 
@@ -547,16 +631,16 @@
             }
             speed *= delta_time;
 
-            if (camera.keys["w"]) {
+            if (camera.keys["w"] || camera.keys["arrowup"]) {
                 camera.position = vec3.add(camera.position, camera.position, vec3.scale(vec3.create(), camera.front, speed));
             }
-            if (camera.keys["s"]) {
+            if (camera.keys["s"] || camera.keys["arrowdown"]) {
                 camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), camera.front, speed));
             }
-            if (camera.keys["a"]) {
+            if (camera.keys["a"] || camera.keys["arrowleft"]) {
                 camera.position = vec3.sub(camera.position, camera.position, vec3.scale(vec3.create(), vec3.normalize(vec3.create(), vec3.cross(vec3.create(), camera.front, camera.up)), speed));
             }
-            if (camera.keys["d"]) {
+            if (camera.keys["d"] || camera.keys["arrowright"]) {
                 camera.position = vec3.add(camera.position, camera.position, vec3.scale(vec3.create(), vec3.normalize(vec3.create(), vec3.cross(vec3.create(), camera.front, camera.up)), speed));
             }
             if (camera.keys[" "]) {
@@ -612,7 +696,7 @@
 
             // Draw Skybox
             // Camera direction when looking at the sun from the origin
-            // Float32Array(3)[-0.5065688490867615, 0.5089805126190186, -0.6959359645843506]
+            // Float32Array(3) [ -0.4189602732658386, 0.7617435455322266, -0.49418529868125916 ]
 
 
             sun.position = vec3.fromValues(
@@ -621,10 +705,11 @@
                 camera.position[2]
             );
 
+
             sun.light_dir = vec3.fromValues(
-                -0.5065688490867615,
-                0.5089805126190186,
-                -0.6959359645843506
+                -0.4189602732658386,
+                0.7617435455322266,
+                -0.49418529868125916
             );
 
             sun.light_dir = vec3.normalize(sun.light_dir, vec3.negate(sun.light_dir, sun.light_dir));
