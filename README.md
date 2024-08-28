@@ -14,6 +14,10 @@
 > 
 > Place the textures in the `textures` folder and the skybox in the `skybox` folder and rename them according to the source code.
 
+> [!IMPORTANT]
+> In order to see the textures without CORS making a scene, a lightweight web server must be set up to host the page, an easy alternative is to use python:
+> just run `python -m http.server` in your UNIX terminal (you *are* using UNIX right...?) while in the project folder, the page will be server at http://localhost:8000
+
 This project implements an infinite terrain generator through the use of fractal brownian motion (fBm). 
 
 We use a set of chunks (quads with a fixed number of vertices) to generate the terrain. Each chunk has an 
