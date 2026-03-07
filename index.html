@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+`<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -155,7 +155,9 @@
             out highp vec3 vWorldPosition;
             out highp vec2 vUv;
             out highp float vHeight;
-
+            out highp vec3 vTangent;
+            out highp vec3 vBitangent;
+            out highp vec3 vNormal;
 
             uniform sampler2D uNoiseSampler;
 
@@ -170,6 +172,22 @@
 
                 vUv = aVertexUv.xy;
                 vHeight = h;
+
+                // Compute smooth normals from height map finite differences
+                const highp float eps = 1.0 / 128.0;
+                float h_r = texture(uNoiseSampler, aVertexUv.xy + vec2(eps, 0.0)).r;
+                float h_l = texture(uNoiseSampler, aVertexUv.xy - vec2(eps, 0.0)).r;
+                float h_u = texture(uNoiseSampler, aVertexUv.xy + vec2(0.0, eps)).r;
+                float h_d = texture(uNoiseSampler, aVertexUv.xy - vec2(0.0, eps)).r;
+
+                vec3 tangent_local = normalize(vec3(2.0 * eps, 0.0, h_r - h_l));
+                vec3 bitangent_local = normalize(vec3(0.0, 2.0 * eps, h_u - h_d));
+                vec3 normal_local = normalize(cross(tangent_local, bitangent_local));
+
+                mat3 normalMatrix = transpose(inverse(mat3(uModelMatrix)));
+                vTangent = normalize(normalMatrix * tangent_local);
+                vBitangent = normalize(normalMatrix * bitangent_local);
+                vNormal = normalize(normalMatrix * normal_local);
             }
         `;
 
@@ -199,6 +217,9 @@
             in highp vec3 vWorldPosition;
             in highp vec2 vUv;
             in highp float vHeight;
+            in highp vec3 vTangent;
+            in highp vec3 vBitangent;
+            in highp vec3 vNormal;
 
             out vec4 fragColor;
 
@@ -208,16 +229,11 @@
             const highp float ambient = 0.05;
 
             void main(void) {
-                vec3 dx = dFdx(vWorldPosition.xyz);
-                vec3 dy = dFdy(vWorldPosition.xyz);
-
-                vec3 face_normal = normalize(cross(dx, dy));
-
                 // height-dependent texture fetch
                 // around 0.8, blend between grass and snow
 
                 vec3 normal_grass = normalize(texture(uNormalSampler, vUv).xyz);
-                vec3 normal_snow = normalize(texture(uNormalSampler, vUv).xyz);
+                vec3 normal_snow = normalize(texture(uNormalSamplerSnow, vUv).xyz);
 
                 vec3 color_grass = texture(uSampler, vUv).rgb;
                 vec3 color_snow = texture(uSamplerSnow, vUv).rgb;
@@ -227,15 +243,15 @@
 
                 float blend = smoothstep(0.7, 0.8, 1.0 - vHeight);
 
-                vec3 normal = mix(normal_grass, normal_grass, blend);
+                vec3 normal = mix(normal_grass, normal_snow, blend);
                 vec3 albedo = mix(color_grass, color_snow, blend);
                 float roughness = mix(roughness_grass, roughness_snow, blend);
 
 
-                // TBN
-                vec3 T = normalize(dx);
-                vec3 B = normalize(dy);
-                vec3 N = normalize(face_normal);
+                // TBN from smooth interpolated normals computed in vertex shader
+                vec3 T = normalize(vTangent);
+                vec3 B = normalize(vBitangent);
+                vec3 N = normalize(vNormal);
 
                 mat3 TBN = mat3(T, B, N);
 
@@ -290,6 +306,9 @@
             u_normals_texture: gl.getUniformLocation(shaderProgram, 'uNormalSampler'),
             u_roughness_texture: gl.getUniformLocation(shaderProgram, 'uRoughnessSampler'),
             u_cube_texture: gl.getUniformLocation(shaderProgram, 'uSkybox'),
+            u_sampler_snow: gl.getUniformLocation(shaderProgram, 'uSamplerSnow'),
+            u_normal_sampler_snow: gl.getUniformLocation(shaderProgram, 'uNormalSamplerSnow'),
+            u_roughness_sampler_snow: gl.getUniformLocation(shaderProgram, 'uRoughnessSamplerSnow'),
         };
 
         // INIT "GLOBALS"
@@ -825,7 +844,6 @@
 
                 gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
             }
-            gl.drawElements(gl.TRIANGLES, buffers.n_elements, gl.UNSIGNED_SHORT, 0);
 
             gl.disable(gl.CULL_FACE);
             gl.disable(gl.DEPTH_TEST);
